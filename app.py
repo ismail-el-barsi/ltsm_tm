@@ -1,104 +1,106 @@
-# app.py -- À lancer avec la commande : streamlit run app.py
 import streamlit as st
 import numpy as np
 import keras
 from keras.datasets import imdb
+import csv
+import datetime
+import os
 
-# Importation sécurisée du padding selon l'écosystème TensorFlow/Keras de la machine
 try:
     from keras.utils import pad_sequences
 except ImportError:
     from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-# 1. Configuration des Hyperparamètres globaux
+# Configuration & Constantes
 VOCAB_SIZE = 10000
 MAX_LEN = 200
 MODEL_PATH = 'imdb_sentiment.keras'
+LOG_FILE = 'inference_log.csv'
 
-st.set_page_config(page_title="IMDB Sentiment Analyzer", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="IMDB Analytics & Logs", page_icon="📈", layout="centered")
 
 # =====================================================================
-# 2. CHARGEMENT ET MISE EN CACHE DES RESSOURCES (Performance & Latence)
+# SECURE LOGGING FUNCTION (Médiation des attaques de format)
+# =====================================================================
+def log_inference(input_text, prediction_label, confidence_score, log_file=LOG_FILE):
+    """
+    Loggue chaque inférence dans un CSV local de manière sécurisée.
+    Gère nativement l'échappement des virgules et des sauts de ligne.
+    """
+    # Nettoyage cosmétique pour le snapshot du log (tronqué à 100 caractères)
+    truncated_text = input_text[:100].replace("\n", " ") + "..." if len(input_text) > 100 else input_text
+    timestamp = datetime.datetime.now().isoformat()
+    
+    # Vérification de l'existence du fichier pour écrire l'entête si nécessaire (Edge Case)
+    file_exists = os.path.exists(log_file)
+    
+    # Mode 'a' (append) : crée le fichier s'il n'existe pas, sinon ajoute à la fin
+    with open(log_file, mode='a', encoding='utf-8', newline='') as f:
+        # quoting=csv.QUOTE_MINIMAL force le writer à envelopper le texte entre guillemets ("...") 
+        # si la chaîne contient des virgules, des guillemets ou des retours à la ligne.
+        writer = csv.writer(f, delimiter=',', quoting=csv.QUOTE_MINIMAL)
+        
+        if not file_exists:
+            writer.writerow(["Timestamp", "Input_Text_Snapshot", "Prediction", "Confidence"])
+            
+        writer.writerow([timestamp, truncated_text, prediction_label, f"{confidence_score:.2f}%"])
+
+# =====================================================================
+# CHARGEMENT DES RESSOURCES EN CACHE
 # =====================================================================
 @st.cache_resource
-def load_sentiment_model(model_path):
-    """Charge le modèle d'inférence LSTM et le conserve en RAM."""
-    return keras.models.load_model(model_path)
-
-@st.cache_resource
-def load_imdb_word_index():
-    """Charge et ajuste le dictionnaire de tokens IMDB (+3 shift standard)."""
+def load_resources():
+    model = keras.models.load_model(MODEL_PATH)
     word_index = imdb.get_word_index()
-    # Décalage de 3 pour intégrer les tokens spéciaux requis par l'Embedding
     adjusted_index = {k: (v + 3) for k, v in word_index.items()}
     adjusted_index["<PAD>"] = 0
     adjusted_index["<START>"] = 1
     adjusted_index["<UNK>"] = 2
-    return adjusted_index
+    return model, adjusted_index
 
-# Chargement initial (Bloquant uniquement au tout premier démarrage de l'app)
-with st.spinner("Initialisation de l'IA et chargement des poids du modèle..."):
-    model = load_sentiment_model(MODEL_PATH)
-    imdb_index = load_imdb_word_index()
+model, imdb_index = load_resources()
 
-# =====================================================================
-# 3. PIPELINE DE PRÉTRAITEMENT TEXTUEL
-# =====================================================================
+# Preprocess Pipeline
 def preprocess_text(text, word_index, max_len, vocab_size):
-    """Nettoie, tokenize et padde le texte brut saisi par l'utilisateur."""
-    # Nettoyage rudimentaire de la ponctuation et passage en minuscules
-    clean_text = text.lower().replace(",", "").replace(".", "").replace("!", "").replace("?", "")
+    clean_text = text.lower().replace(",", "").replace(".", "")
     words = clean_text.split()
-    
-    # Construction de la séquence numérique
-    tokens = [1] # Initialisation obligatoire avec le token <START>
+    tokens = [1]
     for word in words:
         if word in word_index and word_index[word] < vocab_size:
             tokens.append(word_index[word])
         else:
-            tokens.append(2) # Remplacement par <UNK> si mot rare ou inconnu
-            
-    # Application du padding strict en configuration 'pre' (conforme Phase 4 & 5)
-    padded_sequence = pad_sequences([tokens], maxlen=max_len, padding='pre', truncating='post')
-    return padded_sequence
+            tokens.append(2)
+    return pad_sequences([tokens], maxlen=max_len, padding='pre', truncating='post')
 
 # =====================================================================
-# 4. INTERFACE UTILISATEUR STREAMLIT
+# INTERFACE GRAPHIQUE
 # =====================================================================
-st.title("🎬 Analyseur de Sentiment IMDB")
-st.write("Saisissez une critique de film (en anglais). Notre modèle de Deep Learning **LSTM Bidirectionnel** déterminera si votre avis est globalement positif ou négatif.")
+st.title("🎬 Analyseur de Sentiment IMDB + Monitoring")
 
-# Zone de saisie utilisateur
-user_input = st.text_area("Votre critique de film :", height=150, placeholder="Type your movie review here...")
+user_input = st.text_area("Saisissez votre critique :", height=120)
+st.caption("Note : les textes de plus de 200 mots sont tronqués.")
 
-# Note informative pour l'adversarial case (limite technique documentée)
-st.caption("⚠️ Note : les textes de plus de 200 mots sont automatiquement tronqués pour correspondre au contexte du réseau.")
-
-# Déclenchement de l'inférence
-if st.button("Analyser le sentiment", type="primary"):
-    
-    # Edge case check : Saisie vide ou uniquement constituée d'espaces
+if st.button("Analyser", type="primary"):
     if not user_input.strip():
-        st.warning("Veuillez saisir du texte avant de lancer l'analyse.")
-        
+        st.warning("Veuillez entrer un texte valide.")
     else:
-        # 1. Prétraitement du texte
-        processed_input = preprocess_text(user_input, imdb_index, MAX_LEN, VOCAB_SIZE)
+        processed = preprocess_text(user_input, imdb_index, MAX_LEN, VOCAB_SIZE)
+        raw_pred = model.predict(processed, verbose=0)[0][0]
         
-        # 2. Inférence (Prédiction brute)
-        with st.spinner("Calcul des probabilités en cours..."):
-            raw_prediction = model.predict(processed_input, verbose=0)[0][0]
-        
-        # 3. Post-traitement et affichage des résultats dynamiques
-        st.subheader("Résultat de l'analyse")
-        
-        if raw_prediction >= 0.5:
-            confidence = raw_prediction * 100
-            st.success(f"**Sentiment : POSITIF** 🟢")
-            st.metric(label="Score de confiance", value=f"{confidence:.2f}%")
+        # Détermination des métriques finales
+        if raw_pred >= 0.5:
+            label, confidence = "Positif", raw_pred * 100
+            st.success(f"**Sentiment : {label}** ({confidence:.2f}%)")
         else:
-            confidence = (1 - raw_prediction) * 100
-            st.error(f"**Sentiment : NÉGATIF** 🔴")
-            st.metric(label="Score de confiance", value=f"{confidence:.2f}%")
+            label, confidence = "Négatif", (1 - raw_pred) * 100
+            st.error(f"**Sentiment : {label}** ({confidence:.2f}%)")
             
-        st.info(f"Probabilité brute retournée par la couche Sigmoïde : {raw_prediction:.4f}")
+        # APPEL DU LOGGER : Enregistrement de la prédiction
+        log_inference(user_input, label, confidence)
+        st.caption("✅ Inférence enregistrée avec succès dans `inference_log.csv`.")
+
+# Section de monitoring basique visible dans l'UI
+if os.path.exists(LOG_FILE):
+    with st.expander("📊 Consulter les derniers logs d'inférence (Monitoring)"):
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            st.text(f.read()[-1000:]) # Affiche les derniers caractères du log

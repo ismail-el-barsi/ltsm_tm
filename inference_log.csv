@@ -1,0 +1,7 @@
+Timestamp,Input_Text_Snapshot,Prediction,Confidence
+2026-05-17T16:45:35.820066,"Timestamp,Input_Text_Snapshot,Prediction,Confidence 2026-05-17T16:45:12.345678,This movie was fantas...",Positif,80.67%
+2026-05-17T16:46:00.408957,his movie was fantastic and I loved the actors,Positif,80.53%
+2026-05-17T16:46:16.455115,"Worst movie ever,
+  I hated the plot,
+  and the director should stop making films.",Négatif,92.71%
+2026-05-17T16:46:51.832382,"2026-05-17T16:46:00.123456,""Worst movie ever, I hated the plot, and the director should stop making ...",Négatif,71.06%
